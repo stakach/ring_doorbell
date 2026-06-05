@@ -1,0 +1,23 @@
+name: ring_doorbell
+version: 0.1.0
+
+authors:
+  - Stephen von Takach <steve@place.technology>
+
+crystal: '>= 1.19.1'
+
+license: MIT
+
+dependencies:
+  # EC (P-256) key handling + ECDH for WebPush payload decryption
+  openssl_ext:
+    github: spider-gazelle/openssl_ext
+
+  # Protocol buffer encoding for the Google checkin + MCS push protocols
+  protobuf:
+    github: jeromegn/protobuf.cr
+
+development_dependencies:
+  # Linter
+  ameba:
+    github: crystal-ameba/ameba
