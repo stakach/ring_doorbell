@@ -25,6 +25,7 @@ module RingDoorbell::FCM
     def connect(login_frame : Bytes, &on_frame : (UInt8, Bytes) -> Nil) : Nil
       socket = TCPSocket.new(@host, @port, connect_timeout: @connect_timeout)
       socket.sync = true
+      enable_keepalive(socket)
       io = if @tls
              tls_socket(socket)
            else
@@ -61,6 +62,17 @@ module RingDoorbell::FCM
       # Buffered channel: never blocks, and `wait_close` still sees the
       # signal if it subscribes later.
       @close_channel.send(nil)
+    end
+
+    # Keep NAT/firewall state alive between push messages — the connection
+    # can legitimately sit idle for the full heartbeat interval.
+    private def enable_keepalive(socket : TCPSocket) : Nil
+      socket.keepalive = true
+      socket.tcp_keepalive_idle = 60
+      socket.tcp_keepalive_interval = 30
+      socket.tcp_keepalive_count = 4
+    rescue Socket::Error
+      # not supported on this platform — heartbeats still cover liveness
     end
 
     private def tls_socket(socket : TCPSocket) : IO

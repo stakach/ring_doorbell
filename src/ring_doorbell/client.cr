@@ -40,6 +40,7 @@ module RingDoorbell
                    @fcm_base : String = FCM::Registration::FCM_BASE,
                    @heartbeat_interval : Time::Span = FCM::Listener::DEFAULT_HEARTBEAT,
                    @login_timeout : Time::Span = 30.seconds,
+                   @stale_after : Time::Span = 1.minute,
                    @startup_grace : Time::Span = 2.seconds)
       @state = StateFile.load(@token_file)
       @auth = Auth.new(@state.hardware_id, oauth_url: oauth_url)
@@ -127,6 +128,7 @@ module RingDoorbell
         host: @mcs_host, port: @mcs_port, tls: @mcs_tls,
         heartbeat_interval: @heartbeat_interval,
         login_timeout: @login_timeout,
+        stale_after: @stale_after,
         startup_grace: @startup_grace)
       listener.on_persistent_ids do |ids|
         @state.persistent_ids = ids

@@ -61,8 +61,10 @@ class FakeMCS
   end
 
   # Encrypts *plaintext* for the registered keys and pushes it to every
-  # connected client. Returns the persistent id used.
-  def push(plaintext : String, persistent_id : String? = nil) : String?
+  # connected client. Returns the persistent id used. *sent* mirrors the
+  # server-side send timestamp carried by real messages (nil = omitted).
+  def push(plaintext : String, persistent_id : String? = nil,
+           sent : Time? = Time.utc) : String?
     persistent_id ||= @mutex.synchronize { "spec-msg-#{@message_counter += 1}" }
     sender = OpenSSL::PKey::EC.generate("P-256")
     salt = Random::Secure.random_bytes(16)
@@ -82,6 +84,7 @@ class FakeMCS
         RingDoorbell::FCM::AppData.new(key: "crypto-key", value: "dh=#{encode.call(sender.public_key_bytes)}"),
       ],
       persistent_id: persistent_id,
+      sent: sent.try(&.to_unix_ms),
       raw_data: ciphertext,
     ))
     persistent_id

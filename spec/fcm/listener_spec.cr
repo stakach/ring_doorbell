@@ -212,7 +212,52 @@ describe RingDoorbell::FCM::Listener do
     end
   end
 
-  it "suppresses replays within the startup grace period" do
+  it "drops pushes whose sent timestamp is older than stale_after" do
+    credentials = spec_fcm_credentials
+    with_fake_mcs(credentials) do |fake|
+      listener = build_listener(credentials, fake)
+      received = 0
+      connected = false
+      listener.on_connected { connected = true }
+      listener.on_notification { received += 1 }
+      listener.start
+      begin
+        wait_until { connected }
+        fake.push(spec_ding_plaintext, sent: Time.utc - 5.minutes)
+        sleep 100.milliseconds
+        received.should eq(0)
+
+        # a fresh one still gets through
+        fake.push(spec_ding_plaintext)
+        wait_until { received == 1 }
+      ensure
+        listener.stop
+      end
+    end
+  end
+
+  it "delivers recent pushes even right after connecting (reconnect gap)" do
+    credentials = spec_fcm_credentials
+    with_fake_mcs(credentials) do |fake|
+      # huge grace window: only the sent timestamp may save the message
+      listener = build_listener(credentials, fake, grace: 10.seconds)
+      received = 0
+      connected = false
+      listener.on_connected { connected = true }
+      listener.on_notification { received += 1 }
+      listener.start
+      begin
+        wait_until { connected }
+        # a press that happened seconds ago (e.g. while reconnecting) must ring
+        fake.push(spec_ding_plaintext, sent: Time.utc - 2.seconds)
+        wait_until { received == 1 }
+      ensure
+        listener.stop
+      end
+    end
+  end
+
+  it "falls back to the startup grace for pushes without a timestamp" do
     credentials = spec_fcm_credentials
     with_fake_mcs(credentials) do |fake|
       listener = build_listener(credentials, fake, grace: 10.seconds)
@@ -223,9 +268,33 @@ describe RingDoorbell::FCM::Listener do
       listener.start
       begin
         wait_until { connected }
-        fake.push(spec_ding_plaintext)
+        fake.push(spec_ding_plaintext, sent: nil)
         sleep 100.milliseconds
         received.should eq(0)
+      ensure
+        listener.stop
+      end
+    end
+  end
+
+  it "resets the reconnect backoff after each successful session" do
+    credentials = spec_fcm_credentials
+    with_fake_mcs(credentials) do |fake|
+      listener = build_listener(credentials, fake)
+      connections = 0
+      listener.on_connected { connections += 1 }
+      listener.start
+      begin
+        wait_until { connections == 1 }
+
+        # each drop follows a logged-in session, so every reconnect delay
+        # must be the base 1s — without the reset the third would take 3s+
+        3.times do |round|
+          fake.drop_clients
+          wait_until(2.seconds, "reconnect #{round + 2} took longer than the base delay") do
+            connections == round + 2
+          end
+        end
       ensure
         listener.stop
       end

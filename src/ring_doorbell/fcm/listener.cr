@@ -28,6 +28,7 @@ module RingDoorbell::FCM
                    @tls : Bool = true,
                    @heartbeat_interval : Time::Span = DEFAULT_HEARTBEAT,
                    @login_timeout : Time::Span = 30.seconds,
+                   @stale_after : Time::Span = 1.minute,
                    @startup_grace : Time::Span = 2.seconds)
       @persistent_ids = persistent_ids.dup
       @seen_ids = Set(String).new(persistent_ids)
@@ -73,9 +74,18 @@ module RingDoorbell::FCM
       while running?
         error = run_connection
         break unless running?
+        # A session that logged in successfully resets the backoff — the
+        # server rotating long-lived connections (or a NAT dropping an idle
+        # one) is routine and must not accumulate delay.
+        retry_count = 0 if @logged_in
         retry_count += 1
         delay = {retry_count.seconds, MAX_RETRY_DELAY}.min
-        Log.warn { "push connection lost (#{error.try &.message || "closed"}); reconnecting in #{delay.total_seconds.to_i}s" }
+        reason = error.try(&.message) || "closed"
+        if @logged_in
+          Log.info { "push connection ended (#{reason}); reconnecting in #{delay.total_seconds.to_i}s (periodic drops are normal)" }
+        else
+          Log.warn { "push connection failed before login (#{reason}); reconnecting in #{delay.total_seconds.to_i}s" }
+        end
         sleep delay
       end
     rescue ex
@@ -206,8 +216,8 @@ module RingDoorbell::FCM
         update_persistent_ids(&.push(persistent_id))
       end
 
-      if stale?
-        Log.info { "ignoring push received immediately after connecting (likely a replay)" }
+      if reason = stale_reason(message)
+        Log.info { "ignoring stale push (#{reason})" }
         return
       end
 
@@ -219,12 +229,22 @@ module RingDoorbell::FCM
       Log.warn { "dropping push with unparseable payload: #{ex.message}" }
     end
 
-    # Replays delivered in the first moments after login are pushes we
-    # already saw (or stale dings) — a doorbell must not ring for those.
-    private def stale? : Bool
-      connected_at = @connected_at
-      return false unless connected_at
-      Time.instant - connected_at < @startup_grace
+    # The server re-delivers unacknowledged messages on every login. Old
+    # replays must not ring the doorbell, but a press that happened moments
+    # ago (e.g. during a reconnect gap) must. The message's `sent` timestamp
+    # decides; pushes without one fall back to the post-login grace window.
+    private def stale_reason(message : DataMessageStanza) : String?
+      sent_ms = message.sent
+      if sent_ms && sent_ms > 0
+        age = Time.utc - Time.unix_ms(sent_ms)
+        return "sent #{age.total_seconds.round.to_i}s ago" if age > @stale_after
+        return nil
+      end
+
+      if (connected_at = @connected_at) && Time.instant - connected_at < @startup_grace
+        return "no timestamp, received immediately after connecting"
+      end
+      nil
     end
 
     private def update_persistent_ids(&) : Nil

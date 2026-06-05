@@ -69,10 +69,19 @@ Notes:
 
 - Callbacks run on the push connection's read fiber — keep them quick, or
   `spawn` long-running work.
-- The listener reconnects automatically (with backoff) and deduplicates
-  re-delivered messages, including across restarts.
-- Notifications replayed in the first seconds after connecting are dropped —
-  a doorbell must not ring for stale events.
+- The connection is a persistent push channel (not long-polling), kept alive
+  with 5-minute heartbeats and TCP keepalive. Google still drops it
+  periodically (server rotation, NAT idle timeouts) — this is normal; the
+  listener reconnects within seconds and the backoff resets after every
+  successful session.
+- The listener deduplicates re-delivered messages, including across restarts.
+- Stale replays are dropped based on each message's server timestamp
+  (default: older than 1 minute) — a doorbell must not ring for old events,
+  but a press that happened during a brief reconnect still gets through.
+- Run **one listener per token file**: the push credentials contain a device
+  identity, and two concurrent connections with the same identity kick each
+  other off (and Ring's rotating refresh token makes shared files go stale).
+  Give each deployment its own token file / login.
 - Intercom buzz events are treated as dings.
 - `on_event` sees every recognised push, including kinds not mapped to
   ding/motion (inspect `event.raw`).

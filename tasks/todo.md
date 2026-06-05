@@ -111,6 +111,29 @@ All ten steps complete (2026-06-05):
 
 Not yet done: git commit/push (awaiting user instruction; no remote set).
 
+## Fix: growing reconnect backoff (user report, 2026-06-05)
+
+MCS is a persistent push channel (not long-poll): 5-min client heartbeats,
+and Google still resets connections periodically (server rotation, NAT
+idle). Expected behaviour per push-receiver (resets retryCount on connect)
+and Chromium (resets backoff after successful login). Bugs fixed:
+
+1. Supervise loop never reset retry_count after a successful login → delay
+   grew 1s,2s,... permanently. Now resets to base after any logged-in
+   session; post-login drops log at INFO ("periodic drops are normal"),
+   pre-login failures stay WARN.
+2. Blanket 2s post-login grace could swallow a ding pressed during a
+   reconnect gap (server replays it right after login). Now staleness uses
+   the DataMessageStanza `sent` timestamp (drop if older than stale_after,
+   default 1 minute); the grace window only applies to messages without a
+   timestamp.
+3. TCP keepalive enabled on the MCS socket (60s idle / 30s interval / 4
+   probes) to hold NAT/firewall state between heartbeats.
+
+Also documented: one listener per token file — concurrent connections with
+the same android_id kick each other off (this was happening while the local
+test bridge and the user's deployment shared copied credentials).
+
 ## Lessons / corrections
 
 - Ring type variance is worse than documented: the SAME field
